@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { Rocket, X, Workflow } from "lucide-react";
+import { Rocket, X, Workflow, Plus } from "lucide-react";
 import { PromptInput } from "@/components/prompt-input";
 import { ChatMessageBubble } from "@/components/chat-message";
 import type { ChatMessage, AssistantResponse } from "@/lib/types";
@@ -178,6 +178,15 @@ export default function Home() {
     sendMessage(lastUserMsg || "Start building", true);
   };
 
+  const handleNewChat = () => {
+    setMessages([]);
+    setChatHistory([]);
+    setLatestMermaid(null);
+    setShowDiagram(false);
+    setHasPlan(false);
+    setIsBuilding(false);
+  };
+
   const hasMessages = messages.length > 0;
 
   return (
@@ -193,6 +202,15 @@ export default function Home() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          {hasMessages && (
+            <button
+              onClick={handleNewChat}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/30"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New Chat
+            </button>
+          )}
           {latestMermaid && !showDiagram && (
             <button
               onClick={() => setShowDiagram(true)}
