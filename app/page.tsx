@@ -76,30 +76,48 @@ export default function Home() {
         });
 
         const data = await res.json();
-        console.log("[v0] API response:", data);
+        console.log("[v0] Raw API response:", JSON.stringify(data).slice(0, 500));
 
-        const result =
-          data?.data?.executeWorkflow?.result?.response ||
-          data?.data?.executeWorkflow?.result ||
-          null;
+        // The result can be deeply nested and may be a string or object at various levels
+        let rawResult = data?.data?.executeWorkflow?.result;
+        console.log("[v0] rawResult type:", typeof rawResult);
+
+        // If rawResult is a string, parse it
+        if (typeof rawResult === "string") {
+          try {
+            rawResult = JSON.parse(rawResult);
+          } catch {
+            // leave as string
+          }
+        }
+
+        // Now check if there's a .response key inside
+        let innerResult = rawResult?.response ?? rawResult;
+        console.log("[v0] innerResult type:", typeof innerResult);
+
+        // If innerResult is still a string, try parsing
+        if (typeof innerResult === "string") {
+          try {
+            innerResult = JSON.parse(innerResult);
+          } catch {
+            // leave as string
+          }
+        }
 
         let parsed: AssistantResponse | null = null;
         let assistantContent = "";
 
-        if (result) {
-          if (typeof result === "string") {
-            try {
-              parsed = JSON.parse(result);
-            } catch {
-              assistantContent = result;
-            }
-          } else if (typeof result === "object") {
-            parsed = result as AssistantResponse;
-          }
+        if (innerResult && typeof innerResult === "object" && innerResult.message) {
+          parsed = innerResult as AssistantResponse;
+          console.log("[v0] Parsed response - stage:", parsed.stage, "mermaid:", !!parsed.mermaid, "questions:", parsed.questions?.length);
+        } else if (typeof innerResult === "string") {
+          assistantContent = innerResult;
+        } else {
+          assistantContent = JSON.stringify(rawResult);
         }
 
         if (parsed) {
-          assistantContent = JSON.stringify(parsed);
+          assistantContent = parsed.message;
 
           if (parsed.mermaid) {
             setLatestMermaid(parsed.mermaid);
