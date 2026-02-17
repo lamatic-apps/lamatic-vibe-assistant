@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const LAMATIC_URL = "https://sandbox566-aiassistants101.lamatic.dev/graphql";
-const AUTH_TOKEN = "Bearer lt-945f0c4fe78d8e8a5818981148c3deec";
+const AUTH_TOKEN = `Bearer ${process.env.LAMATIC_API_KEY}`;
 const PROJECT_ID = "c80727fc-add3-4e71-a306-11b632c4f1d6";
-const WORKFLOW_ID = "02534fb6-091f-4d11-91a7-e179fe211d4d";
+const WORKFLOW_ID = process.env.PLANNER_WORKFLOW_ID;
 
 const QUERY = `
   query ExecuteWorkflow(
