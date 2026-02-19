@@ -32,8 +32,11 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [latestMermaid, setLatestMermaid] = useState<string | null>(null);
   const [showDiagram, setShowDiagram] = useState(false);
-  const [hasPlan, setHasPlan] = useState(false);
+  const [confidence, setConfidence] = useState(0);
   const [isBuilding, setIsBuilding] = useState(false);
+  // Tracks formatted answers from QuestionRenderer so the chat box
+  // can combine them with any extra typed text on send.
+  const [pendingAnswers, setPendingAnswers] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,24 +47,17 @@ export default function Home() {
 
   const sendMessage = useCallback(
     async (text: string, startGenerating = false) => {
-      const userMessage: DisplayMessage = {
-        role: "user",
-        content: text,
-        parsed: null,
-      };
-
       if (!startGenerating) {
-        setMessages((prev) => [...prev, userMessage]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", content: text, parsed: null },
+        ]);
       }
       setIsLoading(true);
 
       const updatedHistory: ChatMessage[] = [
         ...chatHistory,
-        {
-          role: "user",
-          content: text,
-          timestamp: new Date().toISOString(),
-        },
+        { role: "user", content: text, timestamp: new Date().toISOString() },
       ];
 
       try {
@@ -76,32 +72,18 @@ export default function Home() {
         });
 
         const data = await res.json();
-        console.log("[v0] Raw API response:", JSON.stringify(data).slice(0, 500));
+        console.log("[vibe] Raw API response:", JSON.stringify(data).slice(0, 500));
 
-        // The result can be deeply nested and may be a string or object at various levels
         let rawResult = data?.data?.executeWorkflow?.result;
-        console.log("[v0] rawResult type:", typeof rawResult);
 
-        // If rawResult is a string, parse it
         if (typeof rawResult === "string") {
-          try {
-            rawResult = JSON.parse(rawResult);
-          } catch {
-            // leave as string
-          }
+          try { rawResult = JSON.parse(rawResult); } catch { /* leave */ }
         }
 
-        // Now check if there's a .response key inside
         let innerResult = rawResult?.response ?? rawResult;
-        console.log("[v0] innerResult type:", typeof innerResult);
 
-        // If innerResult is still a string, try parsing
         if (typeof innerResult === "string") {
-          try {
-            innerResult = JSON.parse(innerResult);
-          } catch {
-            // leave as string
-          }
+          try { innerResult = JSON.parse(innerResult); } catch { /* leave */ }
         }
 
         let parsed: AssistantResponse | null = null;
@@ -109,7 +91,7 @@ export default function Home() {
 
         if (innerResult && typeof innerResult === "object" && innerResult.message) {
           parsed = innerResult as AssistantResponse;
-          console.log("[v0] Parsed response - stage:", parsed.stage, "mermaid:", !!parsed.mermaid, "questions:", parsed.questions?.length);
+          console.log("[vibe] Parsed — stage:", parsed.stage, "confidence:", parsed.confidence, "plan:", !!parsed.plan, "questions:", parsed.questions?.length);
         } else if (typeof innerResult === "string") {
           assistantContent = innerResult;
         } else {
@@ -119,13 +101,15 @@ export default function Home() {
         if (parsed) {
           assistantContent = parsed.message;
 
+          // Track latest confidence for gating the Start Building button
+          if (typeof parsed.confidence === "number") {
+            setConfidence(parsed.confidence);
+          }
+
+          // Keep latest mermaid in the side panel as a larger view
           if (parsed.mermaid) {
             setLatestMermaid(parsed.mermaid);
             setShowDiagram(true);
-          }
-
-          if (parsed.stage === "planning" && parsed.plan) {
-            setHasPlan(true);
           }
 
           if (parsed.stage === "building") {
@@ -133,24 +117,29 @@ export default function Home() {
           }
         }
 
-        const assistantDisplayMessage: DisplayMessage = {
-          role: "assistant",
-          content: assistantContent || "No response received.",
-          parsed,
-        };
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: assistantContent || "No response received.",
+            parsed,
+          },
+        ]);
 
-        setMessages((prev) => [...prev, assistantDisplayMessage]);
-
+        // Store the full structured JSON so codeNode_342 can re-extract
+        // the plan, mermaid, and questions on subsequent turns.
+        // The Input Processor parses this JSON and uses `.message` for
+        // the human-readable conversation context.
         setChatHistory([
           ...updatedHistory,
           {
             role: "assistant",
-            content: assistantContent,
+            content: parsed ? JSON.stringify(parsed) : assistantContent,
             timestamp: new Date().toISOString(),
           },
         ]);
       } catch (error) {
-        console.error("[v0] Send message error:", error);
+        console.error("[vibe] Send message error:", error);
         setMessages((prev) => [
           ...prev,
           {
@@ -159,9 +148,7 @@ export default function Home() {
             parsed: {
               stage: "error",
               message: "Something went wrong. Please try again.",
-              mermaid: "",
-              flow_yaml: "",
-              questions: [],
+              confidence: 0,
             },
           },
         ]);
@@ -172,10 +159,41 @@ export default function Home() {
     [chatHistory]
   );
 
+  // Called when user submits answers via the "Send Answers" button directly
+  const handleAnswer = useCallback(
+    (formattedAnswer: string) => {
+      setPendingAnswers(null);
+      sendMessage(formattedAnswer, false);
+    },
+    [sendMessage]
+  );
+
+  // Called whenever QuestionRenderer selection changes — keeps pendingAnswers in sync
+  const handleAnswersChange = useCallback((formatted: string | null) => {
+    setPendingAnswers(formatted);
+  }, []);
+
+  // Chat-box send: if questions have been (partially/fully) answered,
+  // prepend those answers so the Planner gets the full picture.
+  const handleChatSend = useCallback(
+    (text: string) => {
+      if (pendingAnswers) {
+        const combined = text.trim()
+          ? `${pendingAnswers}\n\nAdditional context: ${text.trim()}`
+          : pendingAnswers;
+        setPendingAnswers(null);
+        sendMessage(combined, false);
+      } else {
+        sendMessage(text, false);
+      }
+    },
+    [pendingAnswers, sendMessage]
+  );
+
   const handleStartBuilding = () => {
     const lastUserMsg =
       chatHistory.filter((m) => m.role === "user").pop()?.content || "";
-    sendMessage(lastUserMsg || "Start building", true);
+    sendMessage(lastUserMsg || "Build it", true);
   };
 
   const handleNewChat = () => {
@@ -183,11 +201,19 @@ export default function Home() {
     setChatHistory([]);
     setLatestMermaid(null);
     setShowDiagram(false);
-    setHasPlan(false);
+    setConfidence(0);
     setIsBuilding(false);
+    setPendingAnswers(null);
   };
 
   const hasMessages = messages.length > 0;
+  const canBuild = confidence >= 0.7 && !isBuilding;
+
+  // Index of the last assistant message (for interactive questions)
+  const lastAssistantIdx = messages.reduce(
+    (last, msg, i) => (msg.role === "assistant" ? i : last),
+    -1
+  );
 
   return (
     <div className="flex h-screen flex-col bg-background">
@@ -219,32 +245,15 @@ export default function Home() {
               Show Diagram
             </button>
           )}
-          {hasPlan && !isBuilding && (
-            <button
-              onClick={handleStartBuilding}
-              disabled={isLoading}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50"
-            >
-              <Rocket className="h-3.5 w-3.5" />
-              Start Building
-            </button>
-          )}
         </div>
       </header>
 
-      {/* Main content area */}
+      {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Chat area */}
-        <div
-          className={`flex flex-1 flex-col transition-all duration-300 ${
-            showDiagram && latestMermaid ? "lg:mr-0" : ""
-          }`}
-        >
+        <div className="flex flex-1 flex-col">
           {/* Messages */}
-          <div
-            ref={scrollRef}
-            className="flex-1 overflow-y-auto"
-          >
+          <div ref={scrollRef} className="flex-1 overflow-y-auto">
             {!hasMessages ? (
               <div className="flex h-full flex-col items-center justify-center px-4">
                 <div className="max-w-lg text-center space-y-4">
@@ -268,6 +277,9 @@ export default function Home() {
                     role={msg.role}
                     content={msg.content}
                     parsed={msg.parsed}
+                    isLatest={i === lastAssistantIdx}
+                    onAnswer={i === lastAssistantIdx ? handleAnswer : undefined}
+                    onAnswersChange={i === lastAssistantIdx ? handleAnswersChange : undefined}
                   />
                 ))}
                 {isLoading && (
@@ -283,7 +295,7 @@ export default function Home() {
                           <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:300ms]" />
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          Thinking...
+                          {isBuilding ? "Building your flow..." : "Thinking..."}
                         </span>
                       </div>
                     </div>
@@ -293,15 +305,51 @@ export default function Home() {
             )}
           </div>
 
-          {/* Prompt input */}
-          <div className="border-t border-border bg-background/80 backdrop-blur-sm px-4 py-4">
-            <div className="mx-auto max-w-2xl">
-              <PromptInput onSend={sendMessage} isLoading={isLoading} />
+          {/* Start Building CTA + Prompt input */}
+          <div className="border-t border-border bg-background/80 backdrop-blur-sm px-4 pt-3 pb-4">
+            <div className="mx-auto max-w-2xl space-y-3">
+
+              {/* Confidence progress bar — visible while planning, below threshold */}
+              {hasMessages && !isBuilding && confidence > 0 && confidence < 0.7 && (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary/40 transition-all duration-500"
+                      style={{ width: `${Math.round(confidence * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[11px] text-muted-foreground shrink-0">
+                    {Math.round(confidence * 100)}% ready to build
+                  </span>
+                </div>
+              )}
+
+              {/* Big Start Building button — appears above input when plan is ready */}
+              {canBuild && (
+                <button
+                  onClick={handleStartBuilding}
+                  disabled={isLoading}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:opacity-90 hover:shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Rocket className="h-4 w-4" />
+                  Start Building
+                </button>
+              )}
+
+              <PromptInput
+                onSend={handleChatSend}
+                isLoading={isLoading}
+                placeholder={
+                  pendingAnswers
+                    ? "Add extra context (optional) and press Enter to send with your answers..."
+                    : "Describe the AI workflow you want to build..."
+                }
+              />
             </div>
           </div>
         </div>
 
-        {/* Mermaid diagram panel */}
+        {/* Mermaid side panel — full-size view of latest diagram */}
         {showDiagram && latestMermaid && (
           <div className="hidden lg:flex w-[380px] flex-col border-l border-border bg-card/50">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
