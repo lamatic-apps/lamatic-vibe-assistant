@@ -43,7 +43,35 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
         }
 
         const id = `mermaid-${Date.now()}`;
-        const { svg } = await mermaid.render(id, chart);
+
+        // Sanitize chart to fix common LLM mistakes like unquoted special characters
+        const sanitizeMermaid = (rawNodeStr: string) => {
+          if (!rawNodeStr) return rawNodeStr;
+          return rawNodeStr.split('\n').map(line => {
+            let pLine = line;
+            // Fix square bracket nodes: id[text] -> id["text"]
+            pLine = pLine.replace(/([A-Za-z0-9_-]+)\[([^"\]]+)\]/g, (match, idStr, text) => {
+              if (text.startsWith('[') || text.endsWith(']')) return match;
+              if (text.startsWith('(') && text.endsWith(')')) return match;
+              return `${idStr}["${text}"]`;
+            });
+            // Fix curly bracket nodes: id{text} -> id{"text"}
+            pLine = pLine.replace(/([A-Za-z0-9_-]+)\{([^"\}]+)\}/g, (match, idStr, text) => {
+              if (text.startsWith('{') || text.endsWith('}')) return match;
+              return `${idStr}{"${text}"}`;
+            });
+            // Fix round bracket nodes: id(text) -> id("text")
+            pLine = pLine.replace(/([A-Za-z0-9_-]+)\(([^"\)]+)\)/g, (match, idStr, text) => {
+              if (text.startsWith('(') || text.endsWith(')')) return match;
+              if (text.startsWith('[') && text.endsWith(']')) return match;
+              return `${idStr}("${text}")`;
+            });
+            return pLine;
+          }).join('\n');
+        };
+
+        const sanitizedChart = sanitizeMermaid(chart);
+        const { svg } = await mermaid.render(id, sanitizedChart);
         if (containerRef.current) {
           containerRef.current.innerHTML = svg;
         }

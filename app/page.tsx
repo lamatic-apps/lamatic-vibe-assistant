@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { Rocket, X, Workflow, Plus } from "lucide-react";
+import { Rocket, X, Workflow, Plus, FileJson, Send } from "lucide-react";
 import { PromptInput } from "@/components/prompt-input";
 import { ChatMessageBubble } from "@/components/chat-message";
 import type { ChatMessage, AssistantResponse } from "@/lib/types";
+import { validateN8nInput, buildMigrationMessage } from "@/lib/n8n-migrator";
 
 const MermaidDiagram = dynamic(
   () =>
@@ -20,44 +21,83 @@ const MermaidDiagram = dynamic(
   }
 );
 
+
 interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
   parsed: AssistantResponse | null;
 }
 
+type TabType = "vibe" | "n8n";
+
+interface TabState {
+  messages: DisplayMessage[];
+  chatHistory: ChatMessage[];
+  latestMermaid: string | null;
+  showDiagram: boolean;
+  confidence: number;
+  pendingAnswers: string | null;
+  jsonInputPhase?: boolean;
+}
+
+const initialTabState = (): TabState => ({
+  messages: [],
+  chatHistory: [],
+  latestMermaid: null,
+  showDiagram: false,
+  confidence: 0,
+  pendingAnswers: null,
+});
+
 export default function Home() {
-  const [messages, setMessages] = useState<DisplayMessage[]>([]);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [activeTab, setActiveTab] = useState<TabType>("vibe");
+  const [tabStates, setTabStates] = useState<Record<TabType, TabState>>({
+    vibe: initialTabState(),
+    n8n: { ...initialTabState(), jsonInputPhase: true },
+  });
+
   const [isLoading, setIsLoading] = useState(false);
-  const [latestMermaid, setLatestMermaid] = useState<string | null>(null);
-  const [showDiagram, setShowDiagram] = useState(false);
-  const [confidence, setConfidence] = useState(0);
-  const [isBuilding, setIsBuilding] = useState(false);
-  // Tracks formatted answers from QuestionRenderer so the chat box
-  // can combine them with any extra typed text on send.
-  const [pendingAnswers, setPendingAnswers] = useState<string | null>(null);
+  const [n8nJsonRaw, setN8nJsonRaw] = useState("");
+  const [n8nError, setN8nError] = useState<string | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const currentTabState = tabStates[activeTab];
+
+  const updateCurrentTab = useCallback((updater: Partial<TabState> | ((prev: TabState) => Partial<TabState>)) => {
+    setTabStates((prev) => {
+      const current = prev[activeTab];
+      const updates = typeof updater === "function" ? updater(current) : updater;
+      return {
+        ...prev,
+        [activeTab]: { ...current, ...updates },
+      };
+    });
+  }, [activeTab]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, isLoading]);
+  }, [currentTabState.messages, isLoading, activeTab]);
 
   const sendMessage = useCallback(
-    async (text: string, startGenerating = false) => {
+    async (text: string, startGenerating = false, displayMessageOverride?: string) => {
+      const current = tabStates[activeTab];
+
       if (!startGenerating) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "user", content: text, parsed: null },
-        ]);
+        updateCurrentTab((prev) => ({
+          messages: [
+            ...prev.messages,
+            { role: "user", content: displayMessageOverride || text, parsed: null },
+          ]
+        }));
       }
       setIsLoading(true);
 
-      const updatedHistory: ChatMessage[] = [
-        ...chatHistory,
-        { role: "user", content: text, timestamp: new Date().toISOString() },
+      const apiHistory = displayMessageOverride ? [] : [
+        ...current.chatHistory,
+        { role: "user", content: text, timestamp: new Date().toISOString() }
       ];
 
       try {
@@ -66,21 +106,23 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chatMessage: text,
-            chatHistory: updatedHistory,
+            chatHistory: apiHistory,
             startGenerating: startGenerating ? "true" : "false",
           }),
         });
 
         const data = await res.json();
-        console.log("[vibe] Raw API response:", JSON.stringify(data).slice(0, 500));
+        console.log("[vibe] Raw API response:", JSON.stringify(data).slice(0, 1000));
 
         let rawResult = data?.data?.executeWorkflow?.result;
+        console.log("[vibe] rawResult type:", typeof rawResult, "keys:", typeof rawResult === "object" && rawResult ? Object.keys(rawResult) : "n/a");
 
         if (typeof rawResult === "string") {
           try { rawResult = JSON.parse(rawResult); } catch { /* leave */ }
         }
 
         let innerResult = rawResult?.response ?? rawResult;
+        console.log("[vibe] innerResult type:", typeof innerResult, "keys:", typeof innerResult === "object" && innerResult ? Object.keys(innerResult) : "n/a");
 
         if (typeof innerResult === "string") {
           try { innerResult = JSON.parse(innerResult); } catch { /* leave */ }
@@ -91,126 +133,129 @@ export default function Home() {
 
         if (innerResult && typeof innerResult === "object" && innerResult.message) {
           parsed = innerResult as AssistantResponse;
-          console.log("[vibe] Parsed — stage:", parsed.stage, "confidence:", parsed.confidence, "plan:", !!parsed.plan, "questions:", parsed.questions?.length);
+          console.log("[vibe] Parsed — stage:", parsed.stage, "confidence:", parsed.confidence, "plan:", !!parsed.plan, "questions:", parsed.questions?.length, "flow_json length:", parsed.flow_json?.length ?? "MISSING");
         } else if (typeof innerResult === "string") {
           assistantContent = innerResult;
         } else {
           assistantContent = JSON.stringify(rawResult);
         }
 
-        if (parsed) {
-          assistantContent = parsed.message;
-
-          // Track latest confidence for gating the Start Building button
-          if (typeof parsed.confidence === "number") {
-            setConfidence(parsed.confidence);
-          }
-
-          // Keep latest mermaid in the side panel as a larger view
-          if (parsed.mermaid) {
-            setLatestMermaid(parsed.mermaid);
-            setShowDiagram(true);
-          }
-
-          if (parsed.stage === "building") {
-            setIsBuilding(true);
-          }
-        }
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: assistantContent || "No response received.",
-            parsed,
-          },
-        ]);
-
-        // Store the full structured JSON so codeNode_342 can re-extract
-        // the plan, mermaid, and questions on subsequent turns.
-        // The Input Processor parses this JSON and uses `.message` for
-        // the human-readable conversation context.
-        setChatHistory([
-          ...updatedHistory,
-          {
-            role: "assistant",
-            content: parsed ? JSON.stringify(parsed) : assistantContent,
-            timestamp: new Date().toISOString(),
-          },
-        ]);
+        updateCurrentTab(prev => {
+          return {
+            messages: [
+              ...prev.messages,
+              {
+                role: "assistant",
+                content: assistantContent || "No response received.",
+                parsed,
+              },
+            ],
+            confidence: parsed && typeof parsed.confidence === "number" ? parsed.confidence : prev.confidence,
+            latestMermaid: parsed && parsed.mermaid ? parsed.mermaid : prev.latestMermaid,
+            showDiagram: parsed && parsed.mermaid ? true : prev.showDiagram,
+            chatHistory: [
+              ...prev.chatHistory,
+              { role: "user", content: text, timestamp: new Date().toISOString() },
+              {
+                role: "assistant",
+                content: parsed ? JSON.stringify(parsed) : assistantContent,
+                timestamp: new Date().toISOString(),
+              },
+            ]
+          };
+        });
       } catch (error) {
         console.error("[vibe] Send message error:", error);
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: "Something went wrong. Please try again.",
-            parsed: {
-              stage: "error",
-              message: "Something went wrong. Please try again.",
-              confidence: 0,
+        updateCurrentTab(prev => ({
+          messages: [
+            ...prev.messages,
+            {
+              role: "assistant",
+              content: "Something went wrong. Please try again.",
+              parsed: {
+                stage: "error",
+                message: "Something went wrong. Please try again.",
+                confidence: 0,
+              },
             },
-          },
-        ]);
+          ]
+        }));
       } finally {
         setIsLoading(false);
       }
     },
-    [chatHistory]
+    [activeTab, tabStates, updateCurrentTab]
   );
 
-  // Called when user submits answers via the "Send Answers" button directly
+  const sendMigrationRequest = async () => {
+    const validation = validateN8nInput(n8nJsonRaw);
+    if (!validation.valid) {
+      setN8nError(validation.error!);
+      return;
+    }
+    setN8nError(null);
+
+    const enrichedMessage = buildMigrationMessage(n8nJsonRaw);
+    updateCurrentTab({ jsonInputPhase: false });
+    await sendMessage(enrichedMessage, false, "📥 Analysing n8n workflow...");
+  };
+
   const handleAnswer = useCallback(
     (formattedAnswer: string) => {
-      setPendingAnswers(null);
+      updateCurrentTab({ pendingAnswers: null });
       sendMessage(formattedAnswer, false);
     },
-    [sendMessage]
+    [sendMessage, updateCurrentTab]
   );
 
-  // Called whenever QuestionRenderer selection changes — keeps pendingAnswers in sync
   const handleAnswersChange = useCallback((formatted: string | null) => {
-    setPendingAnswers(formatted);
-  }, []);
+    updateCurrentTab({ pendingAnswers: formatted });
+  }, [updateCurrentTab]);
 
-  // Chat-box send: if questions have been (partially/fully) answered,
-  // prepend those answers so the Planner gets the full picture.
   const handleChatSend = useCallback(
     (text: string) => {
-      if (pendingAnswers) {
+      const current = tabStates[activeTab];
+      if (current.pendingAnswers) {
         const combined = text.trim()
-          ? `${pendingAnswers}\n\nAdditional context: ${text.trim()}`
-          : pendingAnswers;
-        setPendingAnswers(null);
+          ? `${current.pendingAnswers}\n\nAdditional context: ${text.trim()}`
+          : current.pendingAnswers;
+        updateCurrentTab({ pendingAnswers: null });
         sendMessage(combined, false);
       } else {
         sendMessage(text, false);
       }
     },
-    [pendingAnswers, sendMessage]
+    [activeTab, tabStates, sendMessage, updateCurrentTab]
   );
 
   const handleStartBuilding = () => {
+    const current = tabStates[activeTab];
     const lastUserMsg =
-      chatHistory.filter((m) => m.role === "user").pop()?.content || "";
+      current.chatHistory.filter((m) => m.role === "user").pop()?.content || "";
     sendMessage(lastUserMsg || "Build it", true);
   };
 
   const handleNewChat = () => {
-    setMessages([]);
-    setChatHistory([]);
-    setLatestMermaid(null);
-    setShowDiagram(false);
-    setConfidence(0);
-    setIsBuilding(false);
-    setPendingAnswers(null);
+    updateCurrentTab({
+      messages: [],
+      chatHistory: [],
+      latestMermaid: null,
+      showDiagram: false,
+      confidence: 0,
+      pendingAnswers: null,
+      jsonInputPhase: true,
+    });
+    if (activeTab === "n8n") {
+      setN8nJsonRaw("");
+      setN8nError(null);
+    }
   };
 
-  const hasMessages = messages.length > 0;
-  const canBuild = confidence >= 0.7 && !isBuilding;
+  const hasMessages = currentTabState.messages.length > 0;
+  const isBuilding = currentTabState.messages.some((m) => m.parsed?.stage === "building");
+  const canBuild = currentTabState.confidence >= 0.7 && !isBuilding;
 
-  // Index of the last assistant message (for interactive questions)
-  const lastAssistantIdx = messages.reduce(
+  const lastAssistantIdx = currentTabState.messages.reduce(
     (last, msg, i) => (msg.role === "assistant" ? i : last),
     -1
   );
@@ -219,13 +264,33 @@ export default function Home() {
     <div className="flex h-screen flex-col bg-background">
       {/* Header */}
       <header className="flex items-center justify-between border-b border-border px-6 py-3">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15">
-            <Workflow className="h-4 w-4 text-primary" />
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15">
+              <Workflow className="h-4 w-4 text-primary" />
+            </div>
+            {/* Desktop text indicator, hidden or shrunk if necessary */}
           </div>
-          <h1 className="text-sm font-semibold text-foreground">
-            Lamatic Vibe Assistant
-          </h1>
+          <div className="flex items-center gap-1 bg-secondary/50 p-1 rounded-lg border border-border">
+            <button
+              onClick={() => setActiveTab("vibe")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === "vibe"
+                  ? "bg-background text-foreground shadow-sm border border-border"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+            >
+              Vibe Assistant
+            </button>
+            <button
+              onClick={() => setActiveTab("n8n")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === "n8n"
+                  ? "bg-[#FF6D5A]/10 text-[#FF6D5A] shadow-sm border border-[#FF6D5A]/20"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+            >
+              n8n Migrator
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {hasMessages && (
@@ -237,9 +302,9 @@ export default function Home() {
               New Chat
             </button>
           )}
-          {latestMermaid && !showDiagram && (
+          {currentTabState.latestMermaid && !currentTabState.showDiagram && (
             <button
-              onClick={() => setShowDiagram(true)}
+              onClick={() => updateCurrentTab({ showDiagram: true })}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/30"
             >
               Show Diagram
@@ -255,23 +320,70 @@ export default function Home() {
           {/* Messages */}
           <div ref={scrollRef} className="flex-1 overflow-y-auto">
             {!hasMessages ? (
-              <div className="flex h-full flex-col items-center justify-center px-4">
-                <div className="max-w-lg text-center space-y-4">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20">
-                    <Workflow className="h-7 w-7 text-primary" />
+              activeTab === "n8n" && currentTabState.jsonInputPhase ? (
+                <div className="flex h-full flex-col items-center justify-center px-4 py-8">
+                  <div className="w-full max-w-2xl space-y-6">
+                    <div className="text-center space-y-2">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FF6D5A]/10 border border-[#FF6D5A]/20 mb-4">
+                        <FileJson className="h-7 w-7 text-[#FF6D5A]" />
+                      </div>
+                      <h2 className="text-xl font-semibold text-foreground">n8n Migrator</h2>
+                      <p className="text-sm text-muted-foreground">Paste your n8n workflow JSON export below</p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <textarea
+                        value={n8nJsonRaw}
+                        onChange={(e) => {
+                          setN8nJsonRaw(e.target.value);
+                          if (n8nError) setN8nError(null);
+                        }}
+                        placeholder={`Paste your n8n JSON export here...\n\nTip: In n8n, go to the workflow menu → Download → this gives you the JSON.`}
+                        className="w-full h-[320px] p-4 font-mono text-xs rounded-xl border border-border bg-secondary/30 focus:border-[#FF6D5A]/50 focus:outline-none focus:ring-1 focus:ring-[#FF6D5A]/50 resize-none text-foreground placeholder:text-muted-foreground/60"
+                      />
+                      {n8nError && (
+                        <p className="text-red-500 text-sm font-medium px-1">{n8nError}</p>
+                      )}
+                      <button
+                        onClick={sendMigrationRequest}
+                        disabled={!n8nJsonRaw.trim() || isLoading}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#FF6D5A] hover:bg-[#FF6D5A]/90 py-3 text-sm font-semibold text-white shadow-lg shadow-[#FF6D5A]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isLoading ? (
+                          <span className="flex gap-1 items-center">
+                            <span className="h-1.5 w-1.5 rounded-full bg-white/60 animate-bounce [animation-delay:0ms]" />
+                            <span className="h-1.5 w-1.5 rounded-full bg-white/60 animate-bounce [animation-delay:150ms]" />
+                            <span className="h-1.5 w-1.5 rounded-full bg-white/60 animate-bounce [animation-delay:300ms]" />
+                          </span>
+                        ) : (
+                          <>
+                            Analyse & Migrate
+                            <Send className="h-4 w-4" />
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
-                  <h2 className="text-xl font-semibold text-foreground text-balance">
-                    What do you want to build?
-                  </h2>
-                  <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto">
-                    Describe the AI workflow, chatbot, or automation you have in
-                    mind and I will plan it out for you.
-                  </p>
                 </div>
-              </div>
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center px-4">
+                  <div className="max-w-lg text-center space-y-4">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20">
+                      <Workflow className="h-7 w-7 text-primary" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-foreground text-balance">
+                      What do you want to build?
+                    </h2>
+                    <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto">
+                      Describe the AI workflow, chatbot, or automation you have in
+                      mind and I will plan it out for you.
+                    </p>
+                  </div>
+                </div>
+              )
             ) : (
               <div className="mx-auto max-w-2xl space-y-6 px-4 py-6">
-                {messages.map((msg, i) => (
+                {currentTabState.messages.map((msg, i) => (
                   <ChatMessageBubble
                     key={i}
                     role={msg.role}
@@ -306,58 +418,57 @@ export default function Home() {
           </div>
 
           {/* Start Building CTA + Prompt input */}
-          <div className="border-t border-border bg-background/80 backdrop-blur-sm px-4 pt-3 pb-4">
-            <div className="mx-auto max-w-2xl space-y-3">
-
-              {/* Confidence progress bar — visible while planning, below threshold */}
-              {hasMessages && !isBuilding && confidence > 0 && confidence < 0.7 && (
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-primary/40 transition-all duration-500"
-                      style={{ width: `${Math.round(confidence * 100)}%` }}
-                    />
+          {!(activeTab === "n8n" && currentTabState.jsonInputPhase) && (
+            <div className="border-t border-border bg-background/80 backdrop-blur-sm px-4 pt-3 pb-4">
+              <div className="mx-auto max-w-2xl space-y-3">
+                {hasMessages && !isBuilding && currentTabState.confidence > 0 && currentTabState.confidence < 0.7 && (
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-primary/40 transition-all duration-500"
+                        style={{ width: `${Math.round(currentTabState.confidence * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-muted-foreground shrink-0">
+                      {Math.round(currentTabState.confidence * 100)}% ready to build
+                    </span>
                   </div>
-                  <span className="text-[11px] text-muted-foreground shrink-0">
-                    {Math.round(confidence * 100)}% ready to build
-                  </span>
-                </div>
-              )}
+                )}
 
-              {/* Big Start Building button — appears above input when plan is ready */}
-              {canBuild && (
-                <button
-                  onClick={handleStartBuilding}
-                  disabled={isLoading}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:opacity-90 hover:shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Rocket className="h-4 w-4" />
-                  Start Building
-                </button>
-              )}
+                {canBuild && (
+                  <button
+                    onClick={handleStartBuilding}
+                    disabled={isLoading}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:opacity-90 hover:shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Rocket className="h-4 w-4" />
+                    Start Building
+                  </button>
+                )}
 
-              <PromptInput
-                onSend={handleChatSend}
-                isLoading={isLoading}
-                placeholder={
-                  pendingAnswers
-                    ? "Add extra context (optional) and press Enter to send with your answers..."
-                    : "Describe the AI workflow you want to build..."
-                }
-              />
+                <PromptInput
+                  onSend={handleChatSend}
+                  isLoading={isLoading}
+                  placeholder={
+                    currentTabState.pendingAnswers
+                      ? "Add extra context (optional) and press Enter to send with your answers..."
+                      : "Describe the AI workflow you want to build..."
+                  }
+                />
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        {/* Mermaid side panel — full-size view of latest diagram */}
-        {showDiagram && latestMermaid && (
+        {/* Mermaid side panel */}
+        {currentTabState.showDiagram && currentTabState.latestMermaid && (
           <div className="hidden lg:flex w-[380px] flex-col border-l border-border bg-card/50">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Flow Diagram
               </h3>
               <button
-                onClick={() => setShowDiagram(false)}
+                onClick={() => updateCurrentTab({ showDiagram: false })}
                 className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary"
                 aria-label="Close diagram panel"
               >
@@ -365,7 +476,7 @@ export default function Home() {
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4">
-              <MermaidDiagram chart={latestMermaid} />
+              <MermaidDiagram chart={currentTabState.latestMermaid} />
             </div>
           </div>
         )}

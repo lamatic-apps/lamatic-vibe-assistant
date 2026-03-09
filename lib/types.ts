@@ -39,5 +39,5 @@ export interface AssistantResponse {
   mermaid?: string;
   plan?: PlanObject;
   questions?: Question[];
-  flow_yaml?: string;
+  flow_json?: string;
 }

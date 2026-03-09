@@ -44,8 +44,12 @@ export function ChatMessageBubble({
   const plan = parsed?.plan;
   const mermaid = parsed?.mermaid;
   const questions = parsed?.questions;
-  const flowYaml = parsed?.flow_yaml;
+  const flowJson = parsed?.flow_json;
   const confidence = parsed?.confidence;
+
+  if (stage === "building") {
+    console.log("[vibe] ChatMessage building stage — flow_json type:", typeof flowJson, "value length:", typeof flowJson === "string" ? flowJson.length : flowJson);
+  }
 
   return (
     <div className="flex items-start gap-3">
@@ -160,8 +164,12 @@ export function ChatMessageBubble({
           />
         )}
 
-        {/* YAML panel — rendered when flow_yaml is present (building stage) */}
-        {flowYaml && <YamlPanel yaml={flowYaml} />}
+        {/* JSON panel — rendered when flow_json is present (building stage) */}
+        {flowJson && (
+          <YamlPanel
+            yaml={typeof flowJson === "string" ? flowJson : JSON.stringify(flowJson, null, 2)}
+          />
+        )}
       </div>
     </div>
   );
@@ -177,11 +185,11 @@ function YamlPanel({ yaml }: { yaml: string }) {
   };
 
   const handleDownload = () => {
-    const blob = new Blob([yaml], { type: "text/yaml" });
+    const blob = new Blob([yaml], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "lamatic-flow.yaml";
+    a.download = "lamatic-flow.json";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -189,7 +197,7 @@ function YamlPanel({ yaml }: { yaml: string }) {
   return (
     <div className="mt-3 rounded-xl border border-border overflow-hidden">
       <div className="flex items-center justify-between border-b border-border bg-secondary/50 px-4 py-2.5">
-        <span className="text-xs font-medium text-muted-foreground">lamatic-flow.yaml</span>
+        <span className="text-xs font-medium text-muted-foreground">lamatic-flow.json</span>
         <div className="flex items-center gap-2">
           <button
             onClick={handleCopy}
