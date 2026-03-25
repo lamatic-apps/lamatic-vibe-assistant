@@ -133,7 +133,7 @@ export default function Home() {
 
         if (innerResult && typeof innerResult === "object" && innerResult.message) {
           parsed = innerResult as AssistantResponse;
-          console.log("[vibe] Parsed — stage:", parsed.stage, "confidence:", parsed.confidence, "plan:", !!parsed.plan, "questions:", parsed.questions?.length, "flow_json length:", parsed.flow_json?.length ?? "MISSING");
+          console.log("[vibe] Parsed — stage:", parsed.stage, "confidence:", parsed.confidence, "plans:", parsed.plans?.length ?? (parsed.plan ? 1 : 0), "questions:", parsed.questions?.length, "flow_jsons:", parsed.flow_jsons?.length ?? (parsed.flow_json ? 1 : 0));
         } else if (typeof innerResult === "string") {
           assistantContent = innerResult;
         } else {
@@ -253,7 +253,7 @@ export default function Home() {
 
   const hasMessages = currentTabState.messages.length > 0;
   const isBuilding = currentTabState.messages.some((m) => m.parsed?.stage === "building");
-  const canBuild = currentTabState.confidence >= 0.7 && !isBuilding;
+  const canBuild = currentTabState.confidence >= 0.8 && !isBuilding;
 
   const lastAssistantIdx = currentTabState.messages.reduce(
     (last, msg, i) => (msg.role === "assistant" ? i : last),
@@ -275,8 +275,8 @@ export default function Home() {
             <button
               onClick={() => setActiveTab("vibe")}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === "vibe"
-                  ? "bg-background text-foreground shadow-sm border border-border"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                ? "bg-background text-foreground shadow-sm border border-border"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted"
                 }`}
             >
               Vibe Assistant
@@ -284,8 +284,8 @@ export default function Home() {
             <button
               onClick={() => setActiveTab("n8n")}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === "n8n"
-                  ? "bg-[#FF6D5A]/10 text-[#FF6D5A] shadow-sm border border-[#FF6D5A]/20"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                ? "bg-[#FF6D5A]/10 text-[#FF6D5A] shadow-sm border border-[#FF6D5A]/20"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted"
                 }`}
             >
               n8n Migrator
@@ -421,7 +421,7 @@ export default function Home() {
           {!(activeTab === "n8n" && currentTabState.jsonInputPhase) && (
             <div className="border-t border-border bg-background/80 backdrop-blur-sm px-4 pt-3 pb-4">
               <div className="mx-auto max-w-2xl space-y-3">
-                {hasMessages && !isBuilding && currentTabState.confidence > 0 && currentTabState.confidence < 0.7 && (
+                {hasMessages && !isBuilding && currentTabState.confidence > 0 && currentTabState.confidence < 0.8 && (
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
                       <div

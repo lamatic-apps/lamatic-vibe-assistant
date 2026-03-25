@@ -24,11 +24,17 @@ export interface PlanNode {
 }
 
 export interface PlanObject {
+  name?: string;
   trigger_type: string;
   nodes: PlanNode[];
   response_type: string;
   integrations: string[];
   description: string;
+}
+
+export interface FlowJsonItem {
+  name: string;
+  flow_json: string;
 }
 
 export interface AssistantResponse {
@@ -37,7 +43,10 @@ export interface AssistantResponse {
   confidence: number;
   // Optional — LLM decides whether to include these
   mermaid?: string;
-  plan?: PlanObject;
+  plans?: PlanObject[];
   questions?: Question[];
+  flow_jsons?: FlowJsonItem[];
+  // Legacy single-flow fields (backward compat)
+  plan?: PlanObject;
   flow_json?: string;
 }

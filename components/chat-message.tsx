@@ -41,14 +41,14 @@ export function ChatMessageBubble({
   // Determine what to render from parsed response
   const displayMessage = parsed?.message || content;
   const stage = parsed?.stage;
-  const plan = parsed?.plan;
+  const plans = parsed?.plans || (parsed?.plan ? [parsed.plan] : undefined);
   const mermaid = parsed?.mermaid;
   const questions = parsed?.questions;
-  const flowJson = parsed?.flow_json;
+  const flowJsons = parsed?.flow_jsons || (parsed?.flow_json ? [{ name: "Flow", flow_json: parsed.flow_json }] : undefined);
   const confidence = parsed?.confidence;
 
   if (stage === "building") {
-    console.log("[vibe] ChatMessage building stage — flow_json type:", typeof flowJson, "value length:", typeof flowJson === "string" ? flowJson.length : flowJson);
+    console.log("[vibe] ChatMessage building stage — flow_jsons count:", flowJsons?.length, "items:", flowJsons?.map(f => f.name));
   }
 
   return (
@@ -151,8 +151,10 @@ export function ChatMessageBubble({
           )}
         </div>
 
-        {/* Plan card — rendered when plan object is present */}
-        {plan && <PlanCard plan={plan} mermaid={mermaid} />}
+        {/* Plan cards — rendered when plans array is present */}
+        {plans && plans.length > 0 && plans.map((plan, i) => (
+          <PlanCard key={i} plan={plan} mermaid={plans.length === 1 ? mermaid : undefined} />
+        ))}
 
         {/* Interactive questions — only for latest message */}
         {questions && questions.length > 0 && (
@@ -164,18 +166,20 @@ export function ChatMessageBubble({
           />
         )}
 
-        {/* JSON panel — rendered when flow_json is present (building stage) */}
-        {flowJson && (
+        {/* JSON panels — rendered when flow_jsons are present (building stage) */}
+        {flowJsons && flowJsons.length > 0 && flowJsons.map((item, i) => (
           <YamlPanel
-            yaml={typeof flowJson === "string" ? flowJson : JSON.stringify(flowJson, null, 2)}
+            key={i}
+            yaml={typeof item.flow_json === "string" ? item.flow_json : JSON.stringify(item.flow_json, null, 2)}
+            name={item.name}
           />
-        )}
+        ))}
       </div>
     </div>
   );
 }
 
-function YamlPanel({ yaml }: { yaml: string }) {
+function YamlPanel({ yaml, name }: { yaml: string; name?: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -189,7 +193,7 @@ function YamlPanel({ yaml }: { yaml: string }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "lamatic-flow.json";
+    a.download = `${name || "lamatic-flow"}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -197,7 +201,7 @@ function YamlPanel({ yaml }: { yaml: string }) {
   return (
     <div className="mt-3 rounded-xl border border-border overflow-hidden">
       <div className="flex items-center justify-between border-b border-border bg-secondary/50 px-4 py-2.5">
-        <span className="text-xs font-medium text-muted-foreground">lamatic-flow.json</span>
+        <span className="text-xs font-medium text-muted-foreground">{name || "lamatic-flow"}.json</span>
         <div className="flex items-center gap-2">
           <button
             onClick={handleCopy}

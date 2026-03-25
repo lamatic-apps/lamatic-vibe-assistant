@@ -41,7 +41,7 @@ export function PlanCard({ plan, mermaid }: PlanCardProps) {
         <div className="flex items-center gap-2">
           <Zap className="h-3.5 w-3.5 text-primary shrink-0" />
           <span className="text-xs font-semibold text-foreground">
-            {plan.name ? `${plan.name} — ${plan.description || "Flow Plan"}` : (plan.description || "Flow Plan")}
+            {plan.description || "Flow Plan"}
           </span>
         </div>
         {expanded ? (

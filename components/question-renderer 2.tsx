@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Check, ChevronRight, Pencil } from "lucide-react";
+import { Check, ChevronRight } from "lucide-react";
 import type { Question, QuestionOption } from "@/lib/types";
 
 interface QuestionRendererProps {
@@ -17,15 +17,6 @@ interface AnswerState {
   [questionId: string]: string | string[];
 }
 
-// Track which questions are in "custom answer" mode
-interface CustomModeState {
-  [questionId: string]: boolean;
-}
-// Track custom text for questions in custom mode
-interface CustomTextState {
-  [questionId: string]: string;
-}
-
 export function QuestionRenderer({
   questions,
   onSubmit,
@@ -34,11 +25,8 @@ export function QuestionRenderer({
 }: QuestionRendererProps) {
   const [answers, setAnswers] = useState<AnswerState>({});
   const [submitted, setSubmitted] = useState(false);
-  const [customMode, setCustomMode] = useState<CustomModeState>({});
-  const [customText, setCustomText] = useState<CustomTextState>({});
 
   const allAnswered = questions.every((q) => {
-    if (customMode[q.id]) return customText[q.id]?.trim().length > 0;
     const ans = answers[q.id];
     if (q.type === "multi_select") return Array.isArray(ans) && ans.length > 0;
     return typeof ans === "string" && ans.trim().length > 0;
@@ -76,7 +64,6 @@ export function QuestionRenderer({
     }
 
     const parts = questions.map((q) => {
-      if (customMode[q.id]) return `${q.text}: ${customText[q.id] || ""}`;
       const ans = answers[q.id];
       let answerText = "";
       if (q.type === "multi_select" && Array.isArray(ans)) {
@@ -95,13 +82,12 @@ export function QuestionRenderer({
     });
 
     onAnswersChange(parts.join("\n"));
-  }, [answers, allAnswered, submitted, disabled, questions, onAnswersChange, customMode, customText]);
+  }, [answers, allAnswered, submitted, disabled, questions, onAnswersChange]);
 
   const handleSubmit = useCallback(() => {
     if (!allAnswered || submitted || disabled) return;
 
     const parts = questions.map((q) => {
-      if (customMode[q.id]) return `${q.text}: ${customText[q.id] || ""}`;
       const ans = answers[q.id];
       let answerText = "";
 
@@ -124,7 +110,7 @@ export function QuestionRenderer({
     setSubmitted(true);
     onAnswersChange?.(null); // clear pending answers in parent
     onSubmit(parts.join("\n"));
-  }, [allAnswered, submitted, disabled, questions, answers, onSubmit, customMode, customText]);
+  }, [allAnswered, submitted, disabled, questions, answers, onSubmit]);
 
   // Keyboard shortcuts: 1/2/3 for select questions (only when one select visible)
   useEffect(() => {
@@ -164,7 +150,7 @@ export function QuestionRenderer({
         <div key={q.id} className="rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 space-y-2.5">
           <p className="text-sm font-medium text-foreground">{q.text}</p>
 
-          {q.type === "select" && q.options && !customMode[q.id] && (
+          {q.type === "select" && q.options && (
             <div className="flex flex-wrap gap-2">
               {q.options.map((opt, idx) => (
                 <SelectOption
@@ -179,7 +165,7 @@ export function QuestionRenderer({
             </div>
           )}
 
-          {q.type === "multi_select" && q.options && !customMode[q.id] && (
+          {q.type === "multi_select" && q.options && (
             <div className="space-y-1.5">
               {q.options.map((opt) => {
                 const selected =
@@ -216,37 +202,6 @@ export function QuestionRenderer({
                 );
               })}
             </div>
-          )}
-
-          {/* Custom answer text input — shown when user toggles to custom mode */}
-          {(q.type === "select" || q.type === "multi_select") && customMode[q.id] && (
-            <textarea
-              value={customText[q.id] || ""}
-              onChange={(e) => setCustomText(prev => ({ ...prev, [q.id]: e.target.value }))}
-              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleSubmit())}
-              placeholder="Type your own answer..."
-              disabled={disabled}
-              rows={2}
-              className="w-full rounded-lg border border-primary/30 bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none resize-none"
-            />
-          )}
-
-          {/* Toggle between options and custom answer */}
-          {(q.type === "select" || q.type === "multi_select") && !disabled && (
-            <button
-              onClick={() => {
-                setCustomMode(prev => ({ ...prev, [q.id]: !prev[q.id] }));
-                if (!customMode[q.id]) {
-                  setAnswers(prev => { const next = { ...prev }; delete next[q.id]; return next; });
-                } else {
-                  setCustomText(prev => { const next = { ...prev }; delete next[q.id]; return next; });
-                }
-              }}
-              className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Pencil className="h-3 w-3" />
-              {customMode[q.id] ? "Back to options" : "Write your own answer"}
-            </button>
           )}
 
           {q.type === "text" && (
