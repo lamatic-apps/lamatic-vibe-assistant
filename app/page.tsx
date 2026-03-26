@@ -26,6 +26,7 @@ interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
   parsed: AssistantResponse | null;
+  requestId?: string;
 }
 
 type TabType = "vibe" | "n8n";
@@ -121,6 +122,9 @@ export default function Home() {
           try { rawResult = JSON.parse(rawResult); } catch { /* leave */ }
         }
 
+        const requestId = rawResult?.requestId;
+        console.log("[vibe] requestId:", requestId);
+
         let innerResult = rawResult?.response ?? rawResult;
         console.log("[vibe] innerResult type:", typeof innerResult, "keys:", typeof innerResult === "object" && innerResult ? Object.keys(innerResult) : "n/a");
 
@@ -148,6 +152,7 @@ export default function Home() {
                 role: "assistant",
                 content: assistantContent || "No response received.",
                 parsed,
+                requestId,
               },
             ],
             confidence: parsed && typeof parsed.confidence === "number" ? parsed.confidence : prev.confidence,
@@ -389,6 +394,7 @@ export default function Home() {
                     role={msg.role}
                     content={msg.content}
                     parsed={msg.parsed}
+                    requestId={msg.requestId}
                     isLatest={i === lastAssistantIdx}
                     onAnswer={i === lastAssistantIdx ? handleAnswer : undefined}
                     onAnswersChange={i === lastAssistantIdx ? handleAnswersChange : undefined}

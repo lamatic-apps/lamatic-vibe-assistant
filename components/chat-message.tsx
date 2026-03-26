@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, User, Copy, Check, Download } from "lucide-react";
+import { Bot, User, Copy, Check, Download, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AssistantResponse } from "@/lib/types";
@@ -12,6 +12,7 @@ interface ChatMessageProps {
   role: "user" | "assistant";
   content: string;
   parsed: AssistantResponse | null;
+  requestId?: string;
   isLatest?: boolean;
   onAnswer?: (formattedAnswer: string) => void;
   onAnswersChange?: (formatted: string | null) => void;
@@ -21,6 +22,7 @@ export function ChatMessageBubble({
   role,
   content,
   parsed,
+  requestId,
   isLatest = false,
   onAnswer,
   onAnswersChange,
@@ -37,6 +39,35 @@ export function ChatMessageBubble({
       </div>
     );
   }
+
+  const [feedbackState, setFeedbackState] = useState<"up" | "down" | null>(null);
+  const [feedbackSending, setFeedbackSending] = useState(false);
+
+  const submitFeedback = async (rating: "up" | "down") => {
+    if (!requestId || feedbackSending) return;
+
+    const newState = feedbackState === rating ? null : rating;
+    setFeedbackState(newState);
+
+    if (!newState) return;
+
+    setFeedbackSending(true);
+    try {
+      await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId,
+          rating: newState === "up" ? 1 : 0,
+          metadata: { stage: parsed?.stage },
+        }),
+      });
+    } catch (err) {
+      console.error("[feedback] Submit error:", err);
+    } finally {
+      setFeedbackSending(false);
+    }
+  };
 
   // Determine what to render from parsed response
   const displayMessage = parsed?.message || content;
@@ -150,6 +181,36 @@ export function ChatMessageBubble({
             </div>
           )}
         </div>
+
+        {/* Feedback buttons */}
+        {requestId && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => submitFeedback("up")}
+              disabled={feedbackSending}
+              className={`flex items-center justify-center h-7 w-7 rounded-md transition-colors ${
+                feedbackState === "up"
+                  ? "text-green-500 bg-green-500/10"
+                  : "text-muted-foreground/50 hover:text-foreground hover:bg-secondary"
+              }`}
+              aria-label="Thumbs up"
+            >
+              <ThumbsUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => submitFeedback("down")}
+              disabled={feedbackSending}
+              className={`flex items-center justify-center h-7 w-7 rounded-md transition-colors ${
+                feedbackState === "down"
+                  ? "text-red-500 bg-red-500/10"
+                  : "text-muted-foreground/50 hover:text-foreground hover:bg-secondary"
+              }`}
+              aria-label="Thumbs down"
+            >
+              <ThumbsDown className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Plan cards — rendered when plans array is present */}
         {plans && plans.length > 0 && plans.map((plan, i) => (
